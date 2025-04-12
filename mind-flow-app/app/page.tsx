@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Plus, FileText, CheckSquare, X, Loader2, Sparkles, Edit, Trash2, ArrowLeft } from "lucide-react"
+import { Plus, FileText, CheckSquare, X, Loader2, Sparkles, Edit, Trash2, ArrowLeft, Network, Hash } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -9,9 +9,9 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { analyzeText } from "@/lib/api"
+import { analyzeText, refineTextAndGenerateTags } from "@/lib/api"
 import { saveToLocalStorage, loadFromLocalStorage } from "@/lib/storage"
+import { KnowledgeGraph } from "@/components/knowledge-graph"
 
 // Types
 interface Category {
@@ -24,8 +24,13 @@ interface Document {
   id: string
   title: string
   content: string
+  refinedContent?: string
+  originalContent?: string
   categoryId: string | number
   categoryName: string
+  categories?: Array<{ id: string; title: string; path: string[] }>
+  tags: string[]
+  taxonomyPaths?: string[][]
   createdAt: string
   updatedAt: string
 }
@@ -39,28 +44,35 @@ interface Task {
   createdAt: string
 }
 
-export default function CalmWritingApp() {
+export default function FreeWritingApp() {
   // State for writing and analysis
   const [text, setText] = useState("")
-  const [documentTitle, setDocumentTitle] = useState("Untitled Document")
+  const [documentTitle, setDocumentTitle] = useState("")
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [isRefining, setIsRefining] = useState(false)
 
   // State for categories, documents and tasks
   const [categories, setCategories] = useState<Category[]>([])
   const [documents, setDocuments] = useState<Document[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [aiCategories, setAiCategories] = useState([])
+  const [refinedText, setRefinedText] = useState("")
+  const [generatedTags, setGeneratedTags] = useState<string[]>([])
+  const [editableTags, setEditableTags] = useState<string[]>([])
 
   // State for UI views
-  const [activeView, setActiveView] = useState<"write" | "documents" | "tasks">("write")
+  const [activeView, setActiveView] = useState<"write" | "documents" | "tasks" | "graph">("write")
   const [selectedCategory, setSelectedCategory] = useState<string | number | null>(null)
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [filteredDocuments, setFilteredDocuments] = useState<Document[]>([])
   const [filteredTasks, setFilteredTasks] = useState<Task[]>([])
 
   // Dialog states
   const [isTaskDialogOpen, setIsTaskDialogOpen] = useState(false)
+  const [isTagDialogOpen, setIsTagDialogOpen] = useState(false)
   const [newTaskTitle, setNewTaskTitle] = useState("")
+  const [newTag, setNewTag] = useState("")
   const [currentTaskCategory, setCurrentTaskCategory] = useState<{ id: string | number; name: string } | null>(null)
 
   // Document editing state
@@ -78,16 +90,27 @@ export default function CalmWritingApp() {
     setTasks(savedTasks)
   }, [])
 
-  // Update filtered documents and tasks when selected category changes
+  // Update filtered documents and tasks when selected category or tag changes
   useEffect(() => {
     if (selectedCategory) {
-      setFilteredDocuments(documents.filter((doc) => doc.categoryId === selectedCategory))
+      // Filter documents that have this category either as main category or in their categories array
+      setFilteredDocuments(
+        documents.filter(
+          (doc) =>
+            doc.categoryId === selectedCategory ||
+            (doc.categories && doc.categories.some((cat) => cat.id === selectedCategory)),
+        ),
+      )
       setFilteredTasks(tasks.filter((task) => task.categoryId === selectedCategory))
+      setSelectedTag(null)
+    } else if (selectedTag) {
+      setFilteredDocuments(documents.filter((doc) => doc.tags.includes(selectedTag)))
+      setFilteredTasks([]) // Tags don't apply to tasks in this implementation
     } else {
       setFilteredDocuments(documents)
       setFilteredTasks(tasks)
     }
-  }, [selectedCategory, documents, tasks])
+  }, [selectedCategory, selectedTag, documents, tasks])
 
   // Function to handle organizing with AI
   const handleOrganizeWithAI = async () => {
@@ -100,7 +123,15 @@ export default function CalmWritingApp() {
     setIsPanelOpen(true)
 
     try {
-      // Call the API to analyze the text
+      // First, refine the text and generate tags
+      setIsRefining(true)
+      const refinementResult = await refineTextAndGenerateTags(text)
+      setRefinedText(refinementResult.refinedText)
+      setGeneratedTags(refinementResult.tags)
+      setEditableTags([...refinementResult.tags])
+      setIsRefining(false)
+
+      // Then call the API to analyze the text for categories
       const results = await analyzeText(text)
 
       // Update AI categories with the results
@@ -124,9 +155,6 @@ export default function CalmWritingApp() {
 
         return updatedCategories
       })
-
-      // Automatically save the document
-      saveDocument(results[0]?.id || "general", results[0]?.title || "General")
     } catch (error) {
       console.error("Error analyzing text:", error)
     } finally {
@@ -139,15 +167,24 @@ export default function CalmWritingApp() {
     if (!text.trim()) return
 
     const now = new Date().toISOString()
+    const title = documentTitle || `Thought from ${new Date().toLocaleDateString()}`
 
     // If editing an existing document
     if (isEditing && currentDocument) {
       const updatedDocument = {
         ...currentDocument,
-        title: documentTitle,
+        title,
         content: text,
+        refinedContent: refinedText || text,
+        originalContent: currentDocument.originalContent || text,
         categoryId,
         categoryName,
+        categories: aiCategories.map((cat) => ({
+          id: cat.id,
+          title: cat.title,
+          path: cat.path || [],
+        })),
+        tags: editableTags,
         updatedAt: now,
       }
 
@@ -161,10 +198,18 @@ export default function CalmWritingApp() {
     else {
       const newDocument: Document = {
         id: `doc_${Date.now()}`,
-        title: documentTitle,
+        title,
         content: text,
+        refinedContent: refinedText || text,
+        originalContent: text,
         categoryId,
         categoryName,
+        categories: aiCategories.map((cat) => ({
+          id: cat.id,
+          title: cat.title,
+          path: cat.path || [],
+        })),
+        tags: editableTags,
         createdAt: now,
         updatedAt: now,
       }
@@ -177,8 +222,14 @@ export default function CalmWritingApp() {
     }
 
     // Reset editing state
+    setIsPanelOpen(false)
     setIsEditing(false)
     setCurrentDocument(null)
+    setText("")
+    setRefinedText("")
+    setDocumentTitle("")
+    setGeneratedTags([])
+    setEditableTags([])
   }
 
   // Function to create a new task
@@ -237,6 +288,8 @@ export default function CalmWritingApp() {
   const editDocument = (document: Document) => {
     setDocumentTitle(document.title)
     setText(document.content)
+    setRefinedText(document.refinedContent || document.content)
+    setEditableTags(document.tags || [])
     setCurrentDocument(document)
     setIsEditing(true)
     setActiveView("write")
@@ -244,8 +297,11 @@ export default function CalmWritingApp() {
 
   // Function to start a new document
   const startNewDocument = () => {
-    setDocumentTitle("Untitled Document")
+    setDocumentTitle("")
     setText("")
+    setRefinedText("")
+    setGeneratedTags([])
+    setEditableTags([])
     setCurrentDocument(null)
     setIsEditing(false)
     setActiveView("write")
@@ -257,12 +313,40 @@ export default function CalmWritingApp() {
     setIsTaskDialogOpen(true)
   }
 
+  // Function to add a new tag
+  const addTag = (tag: string) => {
+    if (!tag.trim() || editableTags.includes(tag.trim())) return
+    setEditableTags([...editableTags, tag.trim()])
+    setNewTag("")
+    setIsTagDialogOpen(false)
+  }
+
+  // Function to remove a tag
+  const removeTag = (tag: string) => {
+    setEditableTags(editableTags.filter((t) => t !== tag))
+  }
+
+  // Function to handle knowledge graph node click
+  const handleGraphNodeClick = (nodeId: string, nodeType: "document" | "tag") => {
+    if (nodeType === "document") {
+      const document = documents.find((doc) => doc.id === nodeId)
+      if (document) {
+        editDocument(document)
+      }
+    } else if (nodeType === "tag") {
+      const tagName = nodeId.replace("tag-", "").replace(/-/g, " ")
+      setSelectedTag(tagName)
+      setSelectedCategory(null)
+      setActiveView("documents")
+    }
+  }
+
   return (
     <div className="flex h-screen bg-neutral-50">
       {/* Sidebar */}
       <div className="w-64 border-r border-neutral-200 bg-white p-4 hidden md:block">
         <div className="mb-6">
-          <h2 className="text-lg font-medium text-neutral-800 mb-3">My Categories</h2>
+          <h2 className="text-lg font-medium text-neutral-800 mb-3">Navigation</h2>
           <div className="flex gap-2 mb-4">
             <Button
               variant={activeView === "write" ? "default" : "outline"}
@@ -279,20 +363,18 @@ export default function CalmWritingApp() {
               onClick={() => {
                 setActiveView("documents")
                 setSelectedCategory(null)
+                setSelectedTag(null)
               }}
             >
               Docs
             </Button>
             <Button
-              variant={activeView === "tasks" ? "default" : "outline"}
+              variant={activeView === "graph" ? "default" : "outline"}
               size="sm"
               className="flex-1"
-              onClick={() => {
-                setActiveView("tasks")
-                setSelectedCategory(null)
-              }}
+              onClick={() => setActiveView("graph")}
             >
-              Tasks
+              Graph
             </Button>
           </div>
 
@@ -303,28 +385,85 @@ export default function CalmWritingApp() {
             onClick={startNewDocument}
           >
             <Plus className="mr-2 h-4 w-4" />
-            New Document
+            New Thought
           </Button>
         </div>
 
-        <ScrollArea className="h-[calc(100vh-180px)]">
-          <div className="space-y-1">
-            {categories.map((category) => (
-              <div
-                key={category.id}
-                className={`flex items-center justify-between p-2 rounded-lg hover:bg-neutral-100 cursor-pointer group ${
-                  selectedCategory === category.id ? "bg-neutral-100" : ""
-                }`}
-                onClick={() => setSelectedCategory(category.id)}
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium text-neutral-500">Categories</h3>
+            {selectedCategory && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs text-neutral-500"
+                onClick={() => setSelectedCategory(null)}
               >
-                <span className="text-neutral-700">{category.name}</span>
-                {category.isNew && (
-                  <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-200 border-none">New!</Badge>
-                )}
-              </div>
-            ))}
+                Clear
+              </Button>
+            )}
           </div>
-        </ScrollArea>
+          <ScrollArea className="h-[150px]">
+            <div className="space-y-1">
+              {categories.map((category) => (
+                <div
+                  key={category.id}
+                  className={`flex items-center justify-between p-2 rounded-lg hover:bg-neutral-100 cursor-pointer group ${
+                    selectedCategory === category.id ? "bg-neutral-100" : ""
+                  }`}
+                  onClick={() => {
+                    setSelectedCategory(category.id)
+                    setSelectedTag(null)
+                    setActiveView("documents")
+                  }}
+                >
+                  <span className="text-neutral-700">{category.name}</span>
+                  {category.isNew && (
+                    <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-200 border-none">New!</Badge>
+                  )}
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium text-neutral-500">Tags</h3>
+            {selectedTag && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs text-neutral-500"
+                onClick={() => setSelectedTag(null)}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+          <ScrollArea className="h-[150px]">
+            <div className="flex flex-wrap gap-2">
+              {Array.from(new Set(documents.flatMap((doc) => doc.tags).filter((tag) => tag))).map((tag) => (
+                <Badge
+                  key={tag}
+                  className={`cursor-pointer ${
+                    selectedTag === tag
+                      ? "bg-sage-500 text-white hover:bg-sage-600"
+                      : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200"
+                  }`}
+                  onClick={() => {
+                    setSelectedTag(tag)
+                    setSelectedCategory(null)
+                    setActiveView("documents")
+                  }}
+                >
+                  <Hash className="h-3 w-3 mr-1" />
+                  {tag}
+                </Badge>
+              ))}
+            </div>
+          </ScrollArea>
+        </div>
       </div>
 
       {/* Main Content */}
@@ -345,34 +484,70 @@ export default function CalmWritingApp() {
                   <ArrowLeft className="h-4 w-4 mr-1" />
                   Back
                 </Button>
-                <h1 className="text-2xl font-medium text-neutral-800">Editing Document</h1>
+                <h1 className="text-2xl font-medium text-neutral-800">Editing Thought</h1>
               </div>
             ) : (
               <h1 className="text-2xl font-medium text-neutral-800 mb-6">Free Thought Writing</h1>
             )}
 
-            <div className="mb-4">
-              <Input
-                value={documentTitle}
-                onChange={(e) => setDocumentTitle(e.target.value)}
-                placeholder="Document Title"
-                className="text-lg font-medium bg-white border-neutral-200 mb-2"
-              />
-              <p className="text-neutral-600 mb-4">
-                {isEditing
-                  ? "Edit your document below."
-                  : "Write freely. Let your thoughts flow naturally without judgment or structure."}
-              </p>
-            </div>
+            {isEditing && (
+              <div className="mb-4">
+                <Input
+                  value={documentTitle}
+                  onChange={(e) => setDocumentTitle(e.target.value)}
+                  placeholder="Title (optional)"
+                  className="text-lg font-medium bg-white border-neutral-200 mb-2"
+                />
+              </div>
+            )}
+
+            <p className="text-neutral-600 mb-4">
+              {isEditing
+                ? "Edit your thought below."
+                : "Write freely. Let your thoughts flow naturally without judgment or structure."}
+            </p>
 
             <div className="mb-6">
               <Textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 placeholder="Start typing your thoughts here..."
-                className="min-h-[300px] p-4 text-lg bg-white border-neutral-200 rounded-xl focus:border-sage-300 focus:ring focus:ring-sage-100 focus:ring-opacity-50 transition-all"
+                className="min-h-[200px] p-4 text-lg bg-white border-neutral-200 rounded-xl focus:border-sage-300 focus:ring focus:ring-sage-100 focus:ring-opacity-50 transition-all"
               />
             </div>
+
+            {editableTags.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-sm font-medium text-neutral-500 mb-2">Tags</h3>
+                <div className="flex flex-wrap gap-2">
+                  {editableTags.map((tag) => (
+                    <Badge
+                      key={tag}
+                      className="bg-neutral-100 text-neutral-700 hover:bg-neutral-200 flex items-center gap-1"
+                    >
+                      {tag}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-4 w-4 rounded-full"
+                        onClick={() => removeTag(tag)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </Badge>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => setIsTagDialogOpen(true)}
+                  >
+                    <Plus className="h-3 w-3 mr-1" />
+                    Add Tag
+                  </Button>
+                </div>
+              </div>
+            )}
 
             <div className="flex gap-3">
               <Button
@@ -414,25 +589,29 @@ export default function CalmWritingApp() {
             <div className="flex justify-between items-center mb-6">
               <h1 className="text-2xl font-medium text-neutral-800">
                 {selectedCategory
-                  ? `Documents: ${categories.find((c) => c.id === selectedCategory)?.name || "Category"}`
-                  : "All Documents"}
+                  ? `Thoughts: ${categories.find((c) => c.id === selectedCategory)?.name || "Category"}`
+                  : selectedTag
+                    ? `Thoughts tagged with "${selectedTag}"`
+                    : "All Thoughts"}
               </h1>
               <Button variant="outline" size="sm" onClick={startNewDocument}>
                 <Plus className="mr-2 h-4 w-4" />
-                New Document
+                New Thought
               </Button>
             </div>
 
             {filteredDocuments.length === 0 ? (
               <div className="text-center py-12 bg-white rounded-xl border border-neutral-200">
                 <FileText className="h-12 w-12 text-neutral-300 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-neutral-700 mb-2">No documents found</h3>
+                <h3 className="text-lg font-medium text-neutral-700 mb-2">No thoughts found</h3>
                 <p className="text-neutral-500 mb-4">
                   {selectedCategory
-                    ? "There are no documents in this category yet."
-                    : "You haven't created any documents yet."}
+                    ? "There are no thoughts in this category yet."
+                    : selectedTag
+                      ? `There are no thoughts tagged with "${selectedTag}" yet.`
+                      : "You haven't created any thoughts yet."}
                 </p>
-                <Button onClick={startNewDocument}>Create Your First Document</Button>
+                <Button onClick={startNewDocument}>Write Your First Thought</Button>
               </div>
             ) : (
               <div className="grid gap-4">
@@ -443,7 +622,7 @@ export default function CalmWritingApp() {
                   >
                     <div className="flex justify-between items-start mb-2">
                       <div>
-                        <h3 className="text-lg font-medium text-neutral-800">{document.title}</h3>
+                        <h3 className="text-lg font-medium text-neutral-800">{document.title || "Untitled Thought"}</h3>
                         <div className="flex items-center text-sm text-neutral-500 mb-2">
                           <Badge className="mr-2 bg-neutral-100 text-neutral-700 hover:bg-neutral-200 border-none">
                             {document.categoryName}
@@ -465,7 +644,7 @@ export default function CalmWritingApp() {
                           size="icon"
                           className="h-8 w-8 text-neutral-500"
                           onClick={() => {
-                            if (confirm("Are you sure you want to delete this document?")) {
+                            if (confirm("Are you sure you want to delete this thought?")) {
                               deleteDocument(document.id)
                             }
                           }}
@@ -474,7 +653,46 @@ export default function CalmWritingApp() {
                         </Button>
                       </div>
                     </div>
-                    <p className="text-neutral-600 line-clamp-2">{document.content}</p>
+                    <p className="text-neutral-600 line-clamp-2">{document.refinedContent || document.content}</p>
+
+                    {/* Display all categories */}
+                    {document.categories && document.categories.length > 0 && (
+                      <div className="mt-2 mb-3">
+                        <h4 className="text-xs font-medium text-neutral-500 mb-1">Categories:</h4>
+                        {document.categories.map((category, index) => (
+                          <div
+                            key={index}
+                            className="text-xs text-neutral-600 mb-1 cursor-pointer hover:text-sage-600"
+                            onClick={() => {
+                              setSelectedCategory(category.id)
+                              setSelectedTag(null)
+                            }}
+                          >
+                            {category.path && category.path.length > 0 ? category.path.join(" > ") : category.title}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {document.tags && document.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-3 mb-2">
+                        {document.tags.map((tag) => (
+                          <Badge
+                            key={tag}
+                            className="bg-neutral-100 text-neutral-600 hover:bg-neutral-200 border-none text-xs"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setSelectedTag(tag)
+                              setSelectedCategory(null)
+                            }}
+                          >
+                            <Hash className="h-3 w-3 mr-1" />
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+
                     <Button variant="ghost" size="sm" className="mt-2" onClick={() => editDocument(document)}>
                       View & Edit
                     </Button>
@@ -485,121 +703,34 @@ export default function CalmWritingApp() {
           </main>
         )}
 
-        {activeView === "tasks" && (
+        {activeView === "graph" && (
           <main className="flex-1 p-6 md:p-10 max-w-4xl mx-auto w-full">
             <div className="flex justify-between items-center mb-6">
-              <h1 className="text-2xl font-medium text-neutral-800">
-                {selectedCategory
-                  ? `Tasks: ${categories.find((c) => c.id === selectedCategory)?.name || "Category"}`
-                  : "All Tasks"}
-              </h1>
-              <Button variant="outline" size="sm" onClick={() => openTaskDialog("general", "General")}>
+              <h1 className="text-2xl font-medium text-neutral-800">Knowledge Graph</h1>
+              <Button variant="outline" size="sm" onClick={startNewDocument}>
                 <Plus className="mr-2 h-4 w-4" />
-                New Task
+                New Thought
               </Button>
             </div>
 
-            <Tabs defaultValue="active">
-              <TabsList className="mb-4">
-                <TabsTrigger value="active">Active</TabsTrigger>
-                <TabsTrigger value="completed">Completed</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="active">
-                {filteredTasks.filter((task) => !task.completed).length === 0 ? (
-                  <div className="text-center py-12 bg-white rounded-xl border border-neutral-200">
-                    <CheckSquare className="h-12 w-12 text-neutral-300 mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-neutral-700 mb-2">No active tasks</h3>
-                    <p className="text-neutral-500 mb-4">
-                      {selectedCategory
-                        ? "There are no active tasks in this category."
-                        : "You don't have any active tasks."}
-                    </p>
-                    <Button onClick={() => openTaskDialog("general", "General")}>Create Your First Task</Button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {filteredTasks
-                      .filter((task) => !task.completed)
-                      .map((task) => (
-                        <div
-                          key={task.id}
-                          className="p-3 bg-white rounded-lg border border-neutral-200 flex items-center"
-                        >
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 mr-2 rounded-md"
-                            onClick={() => toggleTaskCompletion(task.id)}
-                          >
-                            <div className="h-5 w-5 rounded border border-neutral-300"></div>
-                          </Button>
-                          <div className="flex-1">
-                            <p className="text-neutral-800">{task.title}</p>
-                            <Badge className="bg-neutral-100 text-neutral-700 hover:bg-neutral-200 border-none">
-                              {task.categoryName}
-                            </Badge>
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-neutral-500"
-                            onClick={() => deleteTask(task.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </TabsContent>
-
-              <TabsContent value="completed">
-                {filteredTasks.filter((task) => task.completed).length === 0 ? (
-                  <div className="text-center py-12 bg-white rounded-xl border border-neutral-200">
-                    <CheckSquare className="h-12 w-12 text-neutral-300 mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-neutral-700 mb-2">No completed tasks</h3>
-                    <p className="text-neutral-500">Tasks you complete will appear here.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {filteredTasks
-                      .filter((task) => task.completed)
-                      .map((task) => (
-                        <div
-                          key={task.id}
-                          className="p-3 bg-white rounded-lg border border-neutral-200 flex items-center"
-                        >
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 mr-2 rounded-md"
-                            onClick={() => toggleTaskCompletion(task.id)}
-                          >
-                            <div className="h-5 w-5 rounded bg-sage-500 text-white flex items-center justify-center">
-                              <CheckSquare className="h-3 w-3" />
-                            </div>
-                          </Button>
-                          <div className="flex-1">
-                            <p className="text-neutral-500 line-through">{task.title}</p>
-                            <Badge className="bg-neutral-100 text-neutral-500 hover:bg-neutral-200 border-none">
-                              {task.categoryName}
-                            </Badge>
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-neutral-500"
-                            onClick={() => deleteTask(task.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
+            {documents.length === 0 ? (
+              <div className="text-center py-12 bg-white rounded-xl border border-neutral-200">
+                <Network className="h-12 w-12 text-neutral-300 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-neutral-700 mb-2">No thoughts to visualize</h3>
+                <p className="text-neutral-500 mb-4">
+                  Create some thoughts with tags to see them connected in the knowledge graph.
+                </p>
+                <Button onClick={startNewDocument}>Write Your First Thought</Button>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-neutral-200 p-4">
+                <p className="text-neutral-600 mb-4 text-sm">
+                  This graph shows connections between your thoughts based on shared tags. Click on any node to view or
+                  edit.
+                </p>
+                <KnowledgeGraph documents={documents} onNodeClick={handleGraphNodeClick} />
+              </div>
+            )}
           </main>
         )}
       </div>
@@ -627,13 +758,62 @@ export default function CalmWritingApp() {
               {isAnalyzing ? (
                 <div className="flex flex-col items-center justify-center h-64">
                   <Loader2 className="h-8 w-8 text-sage-500 animate-spin mb-4" />
-                  <p className="text-neutral-600">Analyzing your writing...</p>
+                  <p className="text-neutral-600">
+                    {isRefining ? "Refining your writing..." : "Analyzing your writing..."}
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-6">
-                  {aiCategories.length > 0 ? (
+                  {/* Refined Text Section */}
+                  <div className="p-5 rounded-xl bg-neutral-50 border border-neutral-200">
+                    <h3 className="text-lg font-medium text-neutral-800 mb-3">Refined Text</h3>
+                    <p className="text-neutral-600 mb-4">{refinedText}</p>
+
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      <h4 className="text-sm font-medium text-neutral-700 w-full mb-1">Tags:</h4>
+                      {editableTags.map((tag) => (
+                        <Badge
+                          key={tag}
+                          className="bg-neutral-100 text-neutral-700 hover:bg-neutral-200 flex items-center gap-1"
+                        >
+                          {tag}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-4 w-4 rounded-full"
+                            onClick={() => removeTag(tag)}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </Badge>
+                      ))}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => setIsTagDialogOpen(true)}
+                      >
+                        <Plus className="h-3 w-3 mr-1" />
+                        Add Tag
+                      </Button>
+                    </div>
+
+                    <Button
+                      onClick={() => {
+                        const categoryInfo = aiCategories[0] || { id: "general", title: "General" }
+                        saveDocument(categoryInfo.id, categoryInfo.title)
+                      }}
+                      className="w-full bg-sage-500 hover:bg-sage-600 text-white"
+                    >
+                      <FileText className="mr-2 h-4 w-4" />
+                      Save Thought
+                    </Button>
+                  </div>
+
+                  {/* Categories Section */}
+                  {aiCategories.length > 0 && (
                     <>
-                      <p className="text-neutral-600">Based on your writing, we've identified these categories:</p>
+                      <h3 className="text-lg font-medium text-neutral-800">Detected Categories</h3>
 
                       {aiCategories.map((category) => (
                         <div key={category.id} className="p-5 rounded-xl bg-neutral-50 border border-neutral-200">
@@ -645,6 +825,14 @@ export default function CalmWritingApp() {
                           </div>
 
                           <p className="text-neutral-600 mb-4 text-sm">{category.summary}</p>
+
+                          {/* Display hierarchical path */}
+                          {category.path && (
+                            <div className="mb-4 p-3 bg-neutral-100 rounded-lg border border-neutral-200">
+                              <h4 className="text-sm font-medium text-neutral-700 mb-2">Categorization Path:</h4>
+                              <p className="text-sm text-neutral-600">{category.path.join(" > ")}</p>
+                            </div>
+                          )}
 
                           {category.todos && category.todos.length > 0 && (
                             <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-100">
@@ -667,11 +855,10 @@ export default function CalmWritingApp() {
                               className="bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-100 flex-1"
                               onClick={() => {
                                 saveDocument(category.id, category.title)
-                                setIsPanelOpen(false)
                               }}
                             >
                               <FileText className="mr-2 h-4 w-4" />
-                              Save as Note
+                              Save in this Category
                             </Button>
                             <Button
                               variant="outline"
@@ -685,21 +872,7 @@ export default function CalmWritingApp() {
                           </div>
                         </div>
                       ))}
-
-                      <div className="p-5 rounded-xl border border-dashed border-neutral-300 bg-white flex items-center justify-center">
-                        <Button
-                          variant="ghost"
-                          className="text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100"
-                        >
-                          <Plus className="mr-2 h-4 w-4" />
-                          Generate More Categories
-                        </Button>
-                      </div>
                     </>
-                  ) : (
-                    <p className="text-neutral-600">
-                      No categories found. Try writing more detailed content for better analysis.
-                    </p>
                   )}
                 </div>
               )}
@@ -740,6 +913,33 @@ export default function CalmWritingApp() {
               disabled={!newTaskTitle.trim()}
             >
               Create Task
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Tag Creation Dialog */}
+      <Dialog open={isTagDialogOpen} onOpenChange={setIsTagDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add New Tag</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Input
+                placeholder="Tag name"
+                value={newTag}
+                onChange={(e) => setNewTag(e.target.value)}
+                className="col-span-3"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsTagDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => addTag(newTag)} disabled={!newTag.trim() || editableTags.includes(newTag.trim())}>
+              Add Tag
             </Button>
           </DialogFooter>
         </DialogContent>
