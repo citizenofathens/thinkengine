@@ -22,6 +22,8 @@ services:
       - "8002:8000"
     depends_on:
       - db
+    restart: always
+
 
   query:
     build: ./services/query
@@ -64,6 +66,16 @@ services:
       - storage
       - query
       - manage
+  web_front:
+    build:
+      context: ./services/web_front
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - input_api
+
 
 volumes:
   pgdata:

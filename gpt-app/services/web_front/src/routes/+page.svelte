@@ -1,3 +1,4 @@
+<!-- src/routes/+page.svelte -->
 <script lang="ts">
 	let text = '';
 	let message = '';
@@ -14,10 +15,8 @@
 	};
 </script>
 
-<h1>Welcome to SvelteKit</h1>
-<p>Visit <a href="https://svelte.dev/docs/kit">svelte.dev/docs/kit</a> to read the documentation</p>
-
-<textarea bind:value={text} rows="5" cols="40" />
+<h1>메모 입력</h1>
+<textarea bind:value={text} rows="5" cols="40"></textarea>
 <br />
 <button on:click={submit}>메모 생성</button>
 <p>{message}</p>

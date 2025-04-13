@@ -5,8 +5,8 @@ import httpx
 
 app = FastAPI()
 
-PROCESSING_URL = "http://processing:8000/process"
-STORAGE_URL = "http://storage:8000/store"
+PROCESSING_URL = "http://processing:8001/process"
+STORAGE_URL = "http://storage:8002/store"
 
 class MemoInput(BaseModel):
     text: str
