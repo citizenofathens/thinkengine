@@ -1,0 +1,7 @@
+# services/processing/requirements.txt
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+# NLP 로직 있을 경우
+scikit-learn
