@@ -70,7 +70,7 @@ services:
     build:
       context: ./services/web_front
     ports:
-      - "3000:3000"
+      - "4173:4173"
     environment:
       - NODE_ENV=production
     depends_on:

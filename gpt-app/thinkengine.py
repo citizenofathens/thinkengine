@@ -6,7 +6,6 @@ import uuid
 import os
 from datetime import datetime
 import json
-import streamlit as st
 import configparser
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
@@ -15,9 +14,11 @@ import uuid
 import os
 from datetime import datetime
 import json
-import streamlit as st
 from openai import OpenAI
-
+from db import SessionLocal, Memo, Category, MemoCategory, init_db
+import os
+from datetime import datetime
+import json
 # --- Config ---
 os.getenv("OPENAI_API_KEY")  # 또는 직접 API Key를 입력할 수 있음
 
@@ -33,8 +34,17 @@ openai_api_key = config['OPENAI_API_KEY']['OPEN_API_KEY']
 client = OpenAI(api_key=openai_api_key)
 
 # --- FastAPI 앱 생성 ---
-app = FastAPI()
+app = FastAPI() 
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Or set to ["http://localhost:5173"] for your Svelte dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # --- 입력 데이터 모델 ---
 class MemoRequest(BaseModel):
     memo: str
@@ -46,7 +56,13 @@ BASE_CATEGORIES = [
     "보안 위험", "YouTube 기획"
 ]
 
-# --- GPT 분류 함수 ---
+import re
+
+def is_json_like(s):
+    # Simple check for JSON-like string (dict or list)
+    s = s.strip()
+    return (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]"))
+
 def classify_memo(text: str, categories: List[str]) -> Dict:
     prompt = f"""
     당신은 분류 전문가입니다. 아래 메모를 문장 단위로 분리하고, 가능한 한 기존 카테고리에 매핑하세요.
@@ -65,72 +81,230 @@ def classify_memo(text: str, categories: List[str]) -> Dict:
         model="gpt-4",
         messages=[{"role": "user", "content": prompt}]
     )
-    content = response.choices[0].message.content
-    return eval(content)  # 실제 서비스에서는 json.loads + 안전 파싱 권장
+    content = response.choices[0].message.content.strip()
+    if not is_json_like(content):
+        # Return a helpful error to the frontend
+        raise ValueError(f"LLM did not return JSON. Raw output: {content}")
+    try:
+        content_json = content.replace("'", '"') if "'" in content and '"' not in content else content
+        return json.loads(content_json)
+    except Exception as e:
+        raise ValueError(f"Failed to parse LLM output as JSON: {content}\nError: {e}")
 
-# --- 메모 업로드 엔드포인트 ---
+import re
+def extract_metadata(text):
+    # Fast, simple keyword extraction: unique words (alphanumeric, Korean, etc.)
+    import re
+    summary = text.split('.')[0] if '.' in text else text.split('\n')[0]
+    keywords = list(set(re.findall(r'\w+', text)))[:5]
+    return summary, keywords
+
+
+def classify_memo(text: str, categories: List[str], use_structured_output: bool = True) -> Dict:
+    if use_structured_output:
+        summary, keywords = extract_metadata(text)
+        enriched_text = f"요약: {summary}\n키워드: {', '.join(keywords)}\n{text}"
+
+        schema = {
+    "type": "object",
+    "properties": {
+        "classification": {
+            "type": "object",
+            "description": "문장 번호별로 카테고리명을 매핑 (새로운 카테고리는 실제 이름으로)",
+            "additionalProperties": { "type": "string" }
+        },
+        "new_categories": {
+            "type": "array",
+            "items": { "type": "string" }
+        }
+    },
+    "required": ["classification", "new_categories"],
+    "additionalProperties": False
+}
+        prompt = f"""
+        당신은 분류 전문가입니다. 아래 메모의 각 문장을 기존 카테고리 중 하나에 분류하거나, 기존 카테고리에 맞지 않으면 새로운 카테고리명을 직접 만들어서 분류하세요. 
+        새로운 카테고리는 반드시 실제 이름(예: '학습 전략', '개인 습관')으로만 작성하세요. 
+        결과는 아래 JSON 스키마에 맞춰 한국어로만 응답하세요.
+
+        기존 카테고리: {', '.join(categories)}
+
+        메모:
+        {text}
+        """
+
+        response = client.chat.completions.create(
+            model="gpt-4o-2024-08-06",
+            messages=[
+                {"role": "system", "content": "당신은 메모 분류 전문가입니다. 반드시 JSON 스키마에 맞춰 한국어로만 응답하세요."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        content = response.choices[0].message.content.strip()
+        try:
+            return json.loads(content)
+        except Exception as e:
+            raise ValueError(f"Failed to parse LLM output as JSON: {content}\nError: {e}")
+
+
+    else:
+        summary, keywords = extract_metadata(text)
+        enriched_text = f"요약: {summary}\n키워드: {', '.join(keywords)}\n{text}"
+        
+        prompt = f"""
+        당신은 분류 전문가입니다. 아래 메모를 문장 단위로 분리하고, 가능한 한 기존 카테고리에 매핑하세요.
+        만약 어떤 문장이 기존 카테고리와 맞지 않는다면, 새로운 카테고리를 생성하되, 중복되지 않고 간결하게 지어주세요.
+        반드시 JSON 형식(예: {{1: 'AI 개발', 2: '새로운 카테고리: 콘텐츠 확산 전략'}})으로만 응답하세요. 설명 없이 결과만 출력하세요.
+
+        기존 카테고리: {', '.join(categories)}
+
+        메모:
+        {enriched_text}
+        """
+
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "당신은 메모 분류 전문가입니다. 반드시 JSON 형식으로만 응답하세요. 설명 없이 결과만 출력하세요."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        content = response.choices[0].message.content.strip()
+        import re
+        json_match = re.search(r'(\{[\s\S]*\})', content)
+        if not json_match:
+            raise ValueError(f"LLM did not return JSON. Raw output: {content}")
+        json_str = json_match.group(1)
+        json_str = json_str.replace("'", '"') if "'" in json_str and '"' not in json_str else json_str
+        try:
+            return json.loads(json_str)
+        except Exception as e:
+            raise ValueError(f"Failed to parse LLM output as JSON: {json_str}\nOriginal output: {content}\nError: {e}")
 @app.post("/classify")
 async def classify(request: MemoRequest):
-    result = classify_memo(request.memo, BASE_CATEGORIES)
+    summary, keywords = extract_metadata(request.memo)
+    try:
+        result = classify_memo(request.memo, BASE_CATEGORIES)
+    except Exception as e:
+        return {"error": str(e), "metadata": {"summary": summary, "keywords": keywords}}
 
-    # 새로운 카테고리 추출 및 저장
-    new_tags = set()
-    for tag in result.values():
-        if tag.startswith("새로운 카테고리: "):
-            new_tags.add(tag.replace("새로운 카테고리: ", ""))
+    # DB integration
+    init_db()
+    db = SessionLocal()
+    memo_obj = Memo(text=request.memo, created_at=datetime.now(), result_json=result)
+    db.add(memo_obj)
+    db.commit()
+    db.refresh(memo_obj)
 
-    if new_tags:
-        os.makedirs("metadata", exist_ok=True)
-        with open("metadata/new_tags.json", "a", encoding="utf-8") as f:
-            for tag in new_tags:
-                f.write(json.dumps({"tag": tag, "created": datetime.now().isoformat()}) + "\n")
+    # Organize sidebar data
+    sidebar = {}
+    lines = request.memo.strip().splitlines()
+    if "classification" in result:
+        for idx, line in enumerate(lines, 1):
+            idx_str = str(idx)
+            cat = result["classification"].get(idx_str, "분류 안됨")
+            if cat not in sidebar:
+                sidebar[cat] = []
+            sidebar[cat].append(line)
+            # Save category to DB
+            category_obj = db.query(Category).filter_by(name=cat).first()
+            if not category_obj:
+                category_obj = Category(name=cat)
+                db.add(category_obj)
+                db.commit()
+                db.refresh(category_obj)
+            db.add(MemoCategory(memo_id=memo_obj.id, category_id=category_obj.id, sentence_number=idx, sentence=line))
+    else:
+        for idx, line in enumerate(lines, 1):
+            cat = result.get(str(idx), '분류 안됨')
+            if cat.startswith("새로운 카테고리: "):
+                tag = cat.replace("새로운 카테고리: ", "")
+            else:
+                tag = cat
+            if tag not in sidebar:
+                sidebar[tag] = []
+            sidebar[tag].append(line)
+            # Save category to DB
+            category_obj = db.query(Category).filter_by(name=tag).first()
+            if not category_obj:
+                category_obj = Category(name=tag)
+                db.add(category_obj)
+                db.commit()
+                db.refresh(category_obj)
+            db.add(MemoCategory(memo_id=memo_obj.id, category_id=category_obj.id, sentence_number=idx, sentence=line))
+    db.commit()
+    db.close()
 
-    # 저장용 파일 생성 (Obsidian 연동 예시)
-    today = datetime.now().strftime("%Y-%m-%d")
-    filename = f"obsidian_memos/{today}-{uuid.uuid4().hex[:8]}.md"
-    os.makedirs("obsidian_memos", exist_ok=True)
+    return {
+    "result": result,
+    "metadata": {"summary": summary, "keywords": keywords}
+}
 
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(f"# 메모 분류 결과 ({today})\n\n")
-        for idx, line in enumerate(request.memo.strip().splitlines(), 1):
-            category = result.get(idx, '분류 안됨')
-            tag = category.replace("새로운 카테고리: ", "")
-            f.write(f"## {tag}\n- {line}\n\n")
+# --- 메모 업로드 엔드포인트 ---
+# @app.post("/classify")
+# async def classify(request: MemoRequest):
+#     summary, keywords = extract_metadata(request.memo)
+#     try:
+#         result = classify_memo(request.memo, BASE_CATEGORIES)
+#         if not result or not isinstance(result, dict):
+#             return {"error": "Memo could not be classified. Please provide more detailed input.", "metadata": {"summary": summary, "keywords": keywords}}
+#     except Exception as e:
+#         return {"error": str(e), "metadata": {"summary": summary, "keywords": keywords}}
 
-    return {"result": result, "saved_file": filename, "new_tags": list(new_tags)}
+#     # Process the result based on its structure
+#     new_tags = set()
+    
+#     # Check if we're getting the new structured format with classification and new_categories
+#     if "classification" in result and "new_categories" in result:
+#         # The new structure returns categorization in a different format
+#         categorization = result["classification"]
+#         # Add any new categories that were created
+#         for tag in result["new_categories"]:
+#             if tag:  # Ensure the tag is not empty
+#                 new_tags.add(tag)
+#     else:
+#         # Original format processing - each value in the result dict is a category
+#         for tag in result.values():
+#             if isinstance(tag, str) and tag.startswith("새로운 카테고리: "):
+#                 new_tags.add(tag.replace("새로운 카테고리: ", ""))
 
-# --- Streamlit 인터페이스 ---
-def run_streamlit_ui():
-    st.set_page_config(page_title="메모 분류기", layout="wide")
-    st.title("📝 AI 메모 자동 분류기")
+#     if new_tags:
+#         os.makedirs("metadata", exist_ok=True)
+#         with open("metadata/new_tags.json", "a", encoding="utf-8") as f:
+#             for tag in new_tags:
+#                 f.write(json.dumps({"tag": tag, "created": datetime.now().isoformat()}) + "\n")
 
-    memo_input = st.text_area("👉 자유롭게 메모를 입력하세요:", height=300)
+#     # Generate the markdown file
+#     today = datetime.now().strftime("%Y-%m-%d")
+#     filename = f"obsidian_memos/{today}-{uuid.uuid4().hex[:8]}.md"
+#     os.makedirs("obsidian_memos", exist_ok=True)
 
-    if st.button("🚀 분류 시작"):
-        if memo_input.strip() == "":
-            st.warning("메모를 입력해주세요.")
-            return
+#     with open(filename, "w", encoding="utf-8") as f:
+#         f.write(f"# 메모 분류 결과 ({today})\n\n")
+        
+#         # Process based on the structure of result
+#         if "classification" in result:
+#             # New structure - classification is a dict with line numbers as keys
+#             for idx, line in enumerate(request.memo.strip().splitlines(), 1):
+#                 idx_str = str(idx)  # Convert to string to use as key
+#                 if idx_str in result["classification"]:
+#                     category = result["classification"][idx_str]
+#                 else:
+#                     category = "분류 안됨"
+#                 f.write(f"## {category}\n- {line}\n\n")
+#         else:
+#             # Original structure
+#             for idx, line in enumerate(request.memo.strip().splitlines(), 1):
+#                 category = result.get(str(idx) if isinstance(idx, int) else idx, '분류 안됨')
+#                 if isinstance(category, str) and category.startswith("새로운 카테고리: "):
+#                     tag = category.replace("새로운 카테고리: ", "")
+#                 else:
+#                     tag = category
+#                 f.write(f"## {tag}\n- {line}\n\n")
 
-        with st.spinner("GPT가 분류 중입니다..."):
-            result = classify_memo(memo_input, BASE_CATEGORIES)
-
-            new_tags = [tag.replace("새로운 카테고리: ", "") for tag in result.values() if tag.startswith("새로운 카테고리: ")]
-
-            st.subheader("📂 분류 결과")
-            for idx, line in enumerate(memo_input.strip().splitlines(), 1):
-                category = result.get(idx, '분류 안됨')
-                if category.startswith("새로운 카테고리: "):
-                    tag = category.replace("새로운 카테고리: ", "")
-                else:
-                    tag = category
-                st.markdown(f"**{tag}**: {line}")
-
-            if new_tags:
-                st.markdown("---")
-                st.subheader("✨ 새로 생성된 카테고리")
-                for tag in new_tags:
-                    st.markdown(f"- `{tag}`")
-
-# Streamlit 실행 조건 분리 (파일 직접 실행 시)
-if __name__ == "__main__":
-    run_streamlit_ui()
+#     return {
+#         "result": result,
+#         "saved_file": filename,
+#         "new_tags": list(new_tags),
+#         "metadata": {"summary": summary, "keywords": keywords}
+#     }
