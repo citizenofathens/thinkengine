@@ -1,8 +1,7 @@
 # services/manage/main.py
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
-from db import get_db
+from sqlalchemy.orm import Session 
 from models import Memo
 
 app = FastAPI()

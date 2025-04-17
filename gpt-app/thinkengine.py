@@ -15,6 +15,7 @@ import os
 from datetime import datetime
 import json
 from openai import OpenAI
+
 from db import SessionLocal, Memo, Category, MemoCategory, init_db
 import os
 from datetime import datetime
@@ -110,7 +111,7 @@ def classify_memo(text: str, categories: List[str], use_structured_output: bool 
     "properties": {
         "classification": {
             "type": "object",
-            "description": "문장 번호별로 카테고리명을 매핑 (새로운 카테고리는 실제 이름으로)",
+            "description": "Map from sentence number (as string, starting from 1) to category name.",
             "additionalProperties": { "type": "string" }
         },
         "new_categories": {
@@ -121,17 +122,26 @@ def classify_memo(text: str, categories: List[str], use_structured_output: bool 
     "required": ["classification", "new_categories"],
     "additionalProperties": False
 }
+       
         prompt = f"""
-        당신은 분류 전문가입니다. 아래 메모의 각 문장을 기존 카테고리 중 하나에 분류하거나, 기존 카테고리에 맞지 않으면 새로운 카테고리명을 직접 만들어서 분류하세요. 
-        새로운 카테고리는 반드시 실제 이름(예: '학습 전략', '개인 습관')으로만 작성하세요. 
-        결과는 아래 JSON 스키마에 맞춰 한국어로만 응답하세요.
+        당신은 분류 전문가입니다. 아래 메모의 각 문장을 기존 카테고리 중 하나에 분류하거나, 기존 카테고리에 맞지 않으면 새로운 카테고리명을 직접 만들어서 분류하세요.
+        아래 JSON 스키마의 키 이름(classification, new_categories)과 구조를 반드시 그대로 사용하세요.
+        각 문장은 1부터 시작하는 번호로 매핑하세요.
 
-        기존 카테고리: {', '.join(categories)}
+        반드시 아래와 같은 JSON 형식으로만 응답하세요. 예시:
+        {{
+        "classification": {{
+            "1": "카테고리명",
+            "2": "카테고리명"
+        }},
+        "new_categories": [
+            "새로운카테고리"
+        ]
+        }}
 
         메모:
         {text}
         """
-
         response = client.chat.completions.create(
             model="gpt-4o-2024-08-06",
             messages=[

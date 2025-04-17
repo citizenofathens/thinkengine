@@ -4,11 +4,11 @@
 
 1. **Install dependencies** (run in `gpt-app` folder):
    ```bash
-   npm install
+   pnpm install
    ```
 2. **Start the dev server**:
    ```bash
-   npm run dev
+   pnpm run dev
    ```
 3. **Open your browser** to the address shown in the terminal (usually http://localhost:5173/).
 
@@ -17,5 +17,8 @@ You should see the GPT App main page. Edit `src/MainPage.svelte` to customize yo
 ## How to use backent
 
 (run in `gpt-app` folder):
-
-uvicorn thinkengine:app --reload --host 0.0.0.0 --port 8000
+venv\Scripts\activate
+# if use --reload then can't kill the process in terminal
+# uvicorn thinkengine:app  --host 0.0.0.0 --port 8000 
+(run in `gpt-app\domains\llm-categorize-domain\llm-categorizer\src>` folder)
+uvicorn app.main:app --host 0.0.0.0 --port 8000

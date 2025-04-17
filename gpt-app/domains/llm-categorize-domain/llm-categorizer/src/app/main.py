@@ -14,23 +14,24 @@ import uuid
 import os
 from datetime import datetime
 import json
-from openai import OpenAI
-import sys
-import os
+from openai import OpenAI 
 from app.database.db import SessionLocal, Memo, Category, MemoCategory, init_db
 
 from app.api.categorize import classify_memo,extract_metadata
 from app.api.categorize import router
+import logging  
 
 # --- Config ---
-os.getenv("OPENAI_API_KEY")  # 또는 직접 API Key를 입력할 수 있음
-
+#os.getenv("OPENAI_API_KEY")  # 또는 직접 API Key를 입력할 수 있음
 config = configparser.ConfigParser()
+logging.basicConfig(level=logging.DEBUG)
 
-# ini 파일 읽기
-config.read('api_key.ini')
+
+config.read(os.path.join(os.path.dirname(__file__), 'api_key.ini'))
 
 # 값 가져오기
+if 'OPENAI_API_KEY' not in config or 'OPEN_API_KEY' not in config['OPENAI_API_KEY']:
+    raise RuntimeError("Missing [OPENAI_API_KEY] section or OPEN_API_KEY in api_key.ini")
 openai_api_key = config['OPENAI_API_KEY']['OPEN_API_KEY']
 
 # --- Config ---

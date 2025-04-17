@@ -1,8 +1,30 @@
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime
-
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
+from typing import List, Dict
+import openai
+import uuid
+import os
+from datetime import datetime
+import json
+import configparser
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
+from typing import List, Dict
+import uuid
+import os
+from datetime import datetime
+import json
+from openai import OpenAI 
+import os 
 Base = declarative_base()
+
+# --- 입력 데이터 모델 ---
+class MemoRequest(BaseModel):
+    memo: str
+
 
 class Memo(Base):
     __tablename__ = 'memos'

@@ -1,10 +1,5 @@
 <script>
-  export let sidebar = {
-    // Example structure
-    // "학습 전략": ["반사적으로 되도록 하면서연습하는거", ...],
-    // "개인 습관": ["매일 10분씩 복습하기", ...]
-  };
-
+  export let sidebar = {};
   let selectedCategory = null;
 </script>
 
