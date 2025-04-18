@@ -25,12 +25,21 @@ import os
 from app.utils.utils import is_json_like
 
 import configparser
- 
+from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
+
+
+
 from app.utils.config import get_openai_api_key
 openai_api_key = get_openai_api_key()
 
 client = OpenAI(api_key=openai_api_key)
-
+import logging 
+def create_example_data(data):
+    example_data = {}
+    for index, key in enumerate(data.keys(), start=1):
+        example_data[key] = f"example{index}"
+    return example_data
 def extract_metadata(text):
     # Fast, simple keyword extraction: unique words (alphanumeric, Korean, etc.)
     import re
@@ -51,7 +60,7 @@ def generate_prompt(meta_template, task: str = "meta_extract"):
             except Exception as e:
                 raise ValueError(f"meta_template is a string but not valid JSON: {meta_template}\nError: {e}")
     else:
-        raise ValueError(f"meta_template is a string but not valid JSON: {meta_template}") 
+        logging.info(f"meta_template is not string  {meta_template}")
     print("meta_template:", meta_template) 
     fields = {key: (str, Field(default="default",
                                description='document explainable metadata'))
@@ -64,7 +73,7 @@ def generate_prompt(meta_template, task: str = "meta_extract"):
     print('json_schema_data:', json_schema_data)
 
     parser = PydanticOutputParser(pydantic_object=DynamicMetadata)
-    print('template:', template)
+    print('template:', meta_template)
     if task == 'meta_extract':
         prompt = PromptTemplate(
             template="""{prefix} \n메타데이터템플릿:{meta_template}\n문서:{document}\n   1. 전체 문서를 읽고 내용을 이해하세요\
@@ -175,19 +184,22 @@ def classify_memo(text: str, categories: List[str], use_structured_output: bool 
     #     }
     #     }
 
-    llm = OpenAI(api_key=openai_api_key)
+    llm = ChatOpenAI(openai_api_key=openai_api_key, temperature=0.3)
     prompt= generate_prompt(meta_template=schema, task="meta_extract")
     # langgraph 는 langchain의 연결 불편함을 완화함 그리고 다양한 연결, 분기 가능 by teddynote
     suffix = ""
     prefix = "" # if using opensource model 
     logging.info("Prompt generated: %s", prompt.format(prefix=prefix, meta_template=schema, document=text,     suffix=suffix  ))
-    first_chain = prompt | llm.bind(temperature=0.3, stop=['<|eot_id|>'])  # | parser
+    if openai_api_key:          
+        first_chain = prompt | llm
+    else:
+        first_chain = prompt | llm.bind(temperature=0.3, stop=['<|eot_id|>'])  # | parser
     print(prompt.format(prefix=prefix, meta_template=schema , document=text,     suffix=suffix  ))
     llm_response = first_chain.invoke(
             {"prefix": prefix,  "meta_template": schema, "document": text,
              "suffix": suffix })
-    print("llm_response:%s", llm_response)
-    return json.loads(llm_response)
+    print("llm_response:%s", llm_response.content)
+    return json.loads(llm_response.content)
     meta_template_dict = json.loads(meta_template)
     origin_data_keys = list(meta_template_dict.keys())
 
