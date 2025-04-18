@@ -1,4 +1,9 @@
 
+from langchain.output_parsers import (
+    OutputFixingParser,
+    PydanticOutputParser,
+)
+from langchain_core.prompts import PromptTemplate 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from typing import List, Dict
@@ -30,15 +35,36 @@ def extract_metadata(text):
     # Fast, simple keyword extraction: unique words (alphanumeric, Korean, etc.)
     import re
     summary = text.split('.')[0] if '.' in text else text.split('\n')[0]
-    keywords = list(set(re.findall(r'\w+', text)))[:5]
+    keywords = list(set(re.findall(r'\w+', text)))[:5]      
     return summary, keywords
 
-def generate_prompt(self,task:str ="meta_extract", parser=None):
+def generate_prompt(meta_template, task: str = "meta_extract"):
+    import json
     print('메타프롬프트 in')
-    template = MetaExtractPromptTemplate.get_meta_extract_template(task)  # 이후 전환
-    
-    print('template:', template)
+    #late.get_meta_extract_template(task)  # 이후 전환
+    if isinstance(meta_template, str):
+        print('meta_template is a string')
+        meta_template_str = meta_template.strip()
+        if meta_template_str.startswith("{") or meta_template_str.startswith("["):
+            try:
+                meta_template = json.loads(meta_template)
+            except Exception as e:
+                raise ValueError(f"meta_template is a string but not valid JSON: {meta_template}\nError: {e}")
+    else:
+        raise ValueError(f"meta_template is a string but not valid JSON: {meta_template}") 
+    print("meta_template:", meta_template) 
+    fields = {key: (str, Field(default="default",
+                               description='document explainable metadata'))
+    for key, value in meta_template.items() if key != "taxonomy"}
+    print('fields:', fields)
+    DynamicMetadata = create_model('DynamicMetadata', **fields)
+    # create_model을 사용하여 Metadata 클래스 동적으로 확장 
+    print('dynamic meta 확인', DynamicMetadata.schema_json(indent=2))
+    json_schema_data = create_example_data(json.loads(DynamicMetadata.schema_json(indent=2))['properties'])
+    print('json_schema_data:', json_schema_data)
 
+    parser = PydanticOutputParser(pydantic_object=DynamicMetadata)
+    print('template:', template)
     if task == 'meta_extract':
         prompt = PromptTemplate(
             template="""{prefix} \n메타데이터템플릿:{meta_template}\n문서:{document}\n   1. 전체 문서를 읽고 내용을 이해하세요\
@@ -70,88 +96,87 @@ def generate_prompt(self,task:str ="meta_extract", parser=None):
     return prompt
 
 
-def classify_memo(text: str, categories: List[str], use_structured_output: bool = True) -> Dict:
-    #meta_template = json.loads('C:\workspace\thinkengine\gpt-app\domains\llm-categorize-domain\llm-categorizer\src\app\taxonomy_template.json')
-    
-   # meta_template_dict = json.loads(meta_template)
-
+def classify_memo(text: str, categories: List[str], use_structured_output: bool = True) -> Dict: 
+    with open(r'C:\workspace\thinkengine\gpt-app\domains\llm-categorize-domain\llm-categorizer\src\app\taxonomy_template.json', 'r', encoding='utf-8') as f:        
+        schema = json.load(f)
+    print('schema:', schema) 
     #origin_data_keys = list(meta_template_dict.keys())
     from langchain.chat_models import ChatOpenAI
     # Strict schema definition
-    schema = {
-            "taxonomy": {
-                "type": "string",
-                "value": [
-                    "main_category-sub_category"
-                ]
-            },
-            "main_category": {
-                "type": "string",
-                "value": [
-                    "AI 개발", "콘텐츠 제작", "마케팅 전략", "개인 회고",
-                    "트레이딩 분석", "스토리텔링 설계", "UI/UX 디자인",
-                    "보안 위험", "YouTube 기획"
-                ]
-            },
-            "sub_category": {       
-                "type": "dict",
-                "value": {
-                "AI 개발": [
-                    "개인 회고",
-                    "트레이딩 전략",
-                    "AI 개발 툴",
-                    "메모",
-                ],
-                "콘텐츠 제작": [
-                    "콘텐츠 제작 방법",
-                    "콘텐츠 제작 전략",
-                    "콘텐츠 제작 툴",
-                    "메모",
+    # schema = {
+    #         "taxonomy": {
+    #             "type": "string",
+    #             "value": [
+    #                 "main_category-sub_category"
+    #             ]
+    #         },
+    #         "main_category": {
+    #             "type": "string",
+    #             "value": [
+    #                 "AI 개발", "콘텐츠 제작", "마케팅 전략", "개인 회고",
+    #                 "트레이딩 분석", "스토리텔링 설계", "UI/UX 디자인",
+    #                 "보안 위험", "YouTube 기획"
+    #             ]
+    #         },
+    #         "sub_category": {       
+    #             "type": "dict",
+    #             "value": {
+    #             "AI 개발": [
+    #                 "개인 회고",
+    #                 "트레이딩 전략",
+    #                 "AI 개발 툴",
+    #                 "메모",
+    #             ],
+    #             "콘텐츠 제작": [
+    #                 "콘텐츠 제작 방법",
+    #                 "콘텐츠 제작 전략",
+    #                 "콘텐츠 제작 툴",
+    #                 "메모",
         
-                ],
-                "마케팅 전략": [
-                    "마케팅 전략",
-                    "블로그 마케팅",
-                    "메모"
-                ],
-                "개인 회고": [
-                    "메모",
-                    "AI 개발",
-                    "자기 성찰",
-                    "책 내용",
-                    "들은 내용",
-                    "월드 모델"
-                ],
-                "트레이딩 분석": [
-                    "디파이 분석방법",
-                    "따리 방법"
-                ],
-                "스토리텔링 설계": [
-                    "스토리텔링 제작 전략" 
-                ],
-                "UI/UX 디자인": [
-                    "디자인 툴",
-                    "Figma",
-                    "메모",
-                    "Cursor",
-                    "MCP",
-                ],
-                "보안 위험": [
-                    "데이터 보안 전략",
-                    "메모"
-                ],
-                "YouTube 기획": [
-                    "리서치 방법",
-                    "기획 전략",
-                    "기회 발견",
-                    "메모"
-                ]
-            }
-        }
-        }
+    #             ],
+    #             "마케팅 전략": [
+    #                 "마케팅 전략",
+    #                 "블로그 마케팅",
+    #                 "메모"
+    #             ],
+    #             "개인 회고": [
+    #                 "메모",
+    #                 "AI 개발",
+    #                 "자기 성찰",
+    #                 "책 내용",
+    #                 "들은 내용",
+    #                 "월드 모델"
+    #             ],
+    #             "트레이딩 분석": [
+    #                 "디파이 분석방법",
+    #                 "따리 방법"
+    #             ],
+    #             "스토리텔링 설계": [
+    #                 "스토리텔링 제작 전략" 
+    #             ],
+    #             "UI/UX 디자인": [
+    #                 "디자인 툴",
+    #                 "Figma",
+    #                 "메모",
+    #                 "Cursor",
+    #                 "MCP",
+    #             ],
+    #             "보안 위험": [
+    #                 "데이터 보안 전략",
+    #                 "메모"
+    #             ],
+    #             "YouTube 기획": [
+    #                 "리서치 방법",
+    #                 "기획 전략",
+    #                 "기회 발견",
+    #                 "메모"
+    #             ]
+    #         }
+    #     }
+    #     }
 
     llm = OpenAI(api_key=openai_api_key)
-    prompt= generate_prompt("meta_extract")
+    prompt= generate_prompt(meta_template=schema, task="meta_extract")
     # langgraph 는 langchain의 연결 불편함을 완화함 그리고 다양한 연결, 분기 가능 by teddynote
     suffix = ""
     prefix = "" # if using opensource model 
@@ -168,9 +193,7 @@ def classify_memo(text: str, categories: List[str], use_structured_output: bool 
 
     if use_structured_output:
         summary, keywords = extract_metadata(text)
-        enriched_text = f"요약: {summary}\n키워드: {', '.join(keywords)}\n{text}"
-
-        
+        enriched_text = f"요약: {summary}\n키워드: {', '.join(keywords)}\n{text}" 
         
         # Explicit example in the prompt
         prompt = f"""
