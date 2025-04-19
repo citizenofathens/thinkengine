@@ -1,5 +1,7 @@
 <script>
   import Sidebar from './Sidebar.svelte';
+  import DataDetails from './DataDetails.svelte';
+
   let sidebar = {};
 
   // Utility: Filter out unwanted sidebar keys
@@ -44,6 +46,9 @@
       if (response.ok) {
         analysisResult = JSON.stringify(data, null, 2);
         
+        // Store the raw data for the details panel
+        rawData = data;
+        
         // IMPORTANT: Replace sidebar completely instead of merging
         // This ensures old categories like "classification" don't persist
         sidebar = buildSidebar(data);
@@ -58,11 +63,16 @@
   let message = "Welcome to GPT App!";
   let memoText = "";
   let analysisResult = "";
+  let selectedItem = null;
+  let rawData = {};
 </script>
 
 <main>
   <div class="main-layout">
-    <Sidebar {sidebar} />
+    <Sidebar 
+      {sidebar} 
+      on:itemSelect={e => selectedItem = e.detail.item} 
+    />
     <div class="content">
       <h1>{message}</h1>
       <p>This is your Svelte main page. Edit <code>src/MainPage.svelte</code> to customize.</p>
@@ -74,9 +84,16 @@
       </div>
 
       {#if analysisResult}
-        <div class="analysis-result">
-          <h2>Analysis Result</h2>
-          <pre>{analysisResult}</pre>
+        <div class="analysis-container">
+          <div class="analysis-result">
+            <h2>Raw Analysis Data</h2>
+            <pre>{analysisResult}</pre>
+          </div>
+          
+          <div class="details-panel">
+            <h2>Detailed Information</h2>
+            <DataDetails selectedItem={selectedItem} rawData={rawData} />
+          </div>
         </div>
       {/if}
     </div>
@@ -142,13 +159,28 @@ h1 {
   background: #3730a3;
 }
 
-.analysis-result {
+.analysis-container {
   margin-top: 2rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  max-width: 1200px;
+}
+
+.analysis-result {
   background: #f9f9f9;
   border-radius: 8px;
   padding: 1rem;
   box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-  max-width: 800px;
   overflow-x: auto;
 }
+
+.details-panel {
+  background: #f9f9f9;
+  border-radius: 8px;
+  padding: 1rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+
 </style>
