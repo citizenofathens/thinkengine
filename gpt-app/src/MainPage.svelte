@@ -1,7 +1,6 @@
 <script>
   import Sidebar from './Sidebar.svelte';
   import DataDetails from './DataDetails.svelte';
-
   let sidebar = {};
 
   // Utility: Filter out unwanted sidebar keys
@@ -89,11 +88,12 @@
             <h2>Raw Analysis Data</h2>
             <pre>{analysisResult}</pre>
           </div>
-          
-          <div class="details-panel">
-            <h2>Detailed Information</h2>
-            <DataDetails selectedItem={selectedItem} rawData={rawData} />
-          </div>
+          {#if selectedItem}
+            <div class="details-panel">
+              <h2>Detailed Information</h2>
+              <DataDetails selectedItem={selectedItem} rawData={rawData} />
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
@@ -181,6 +181,4 @@ h1 {
   padding: 1rem;
   box-shadow: 0 2px 8px rgba(0,0,0,0.05);
 }
-
-
 </style>
