@@ -1,4 +1,3 @@
-
 from langchain.output_parsers import (
     OutputFixingParser,
     PydanticOutputParser,
@@ -109,185 +108,153 @@ def classify_memo(text: str, categories: List[str], use_structured_output: bool 
     with open(r'C:\workspace\thinkengine\gpt-app\domains\llm-categorize-domain\llm-categorizer\src\app\taxonomy_template.json', 'r', encoding='utf-8') as f:        
         schema = json.load(f)
     print('schema:', schema) 
-    #origin_data_keys = list(meta_template_dict.keys())
+    
     from langchain.chat_models import ChatOpenAI
-    # Strict schema definition
-    # schema = {
-    #         "taxonomy": {
-    #             "type": "string",
-    #             "value": [
-    #                 "main_category-sub_category"
-    #             ]
-    #         },
-    #         "main_category": {
-    #             "type": "string",
-    #             "value": [
-    #                 "AI 개발", "콘텐츠 제작", "마케팅 전략", "개인 회고",
-    #                 "트레이딩 분석", "스토리텔링 설계", "UI/UX 디자인",
-    #                 "보안 위험", "YouTube 기획"
-    #             ]
-    #         },
-    #         "sub_category": {       
-    #             "type": "dict",
-    #             "value": {
-    #             "AI 개발": [
-    #                 "개인 회고",
-    #                 "트레이딩 전략",
-    #                 "AI 개발 툴",
-    #                 "메모",
-    #             ],
-    #             "콘텐츠 제작": [
-    #                 "콘텐츠 제작 방법",
-    #                 "콘텐츠 제작 전략",
-    #                 "콘텐츠 제작 툴",
-    #                 "메모",
-        
-    #             ],
-    #             "마케팅 전략": [
-    #                 "마케팅 전략",
-    #                 "블로그 마케팅",
-    #                 "메모"
-    #             ],
-    #             "개인 회고": [
-    #                 "메모",
-    #                 "AI 개발",
-    #                 "자기 성찰",
-    #                 "책 내용",
-    #                 "들은 내용",
-    #                 "월드 모델"
-    #             ],
-    #             "트레이딩 분석": [
-    #                 "디파이 분석방법",
-    #                 "따리 방법"
-    #             ],
-    #             "스토리텔링 설계": [
-    #                 "스토리텔링 제작 전략" 
-    #             ],
-    #             "UI/UX 디자인": [
-    #                 "디자인 툴",
-    #                 "Figma",
-    #                 "메모",
-    #                 "Cursor",
-    #                 "MCP",
-    #             ],
-    #             "보안 위험": [
-    #                 "데이터 보안 전략",
-    #                 "메모"
-    #             ],
-    #             "YouTube 기획": [
-    #                 "리서치 방법",
-    #                 "기획 전략",
-    #                 "기회 발견",
-    #                 "메모"
-    #             ]
-    #         }
-    #     }
-    #     }
-
+    
     llm = ChatOpenAI(openai_api_key=openai_api_key, temperature=0.3)
-    prompt= generate_prompt(meta_template=schema, task="meta_extract")
-    # langgraph 는 langchain의 연결 불편함을 완화함 그리고 다양한 연결, 분기 가능 by teddynote
+    prompt = generate_prompt(meta_template=schema, task="meta_extract")
+    
     suffix = ""
     prefix = "" # if using opensource model 
-    logging.info("Prompt generated: %s", prompt.format(prefix=prefix, meta_template=schema, document=text,     suffix=suffix  ))
+    logging.info("Prompt generated: %s", prompt.format(prefix=prefix, meta_template=schema, document=text, suffix=suffix))
+    
     if openai_api_key:          
         first_chain = prompt | llm
     else:
-        first_chain = prompt | llm.bind(temperature=0.3, stop=['<|eot_id|>'])  # | parser
-    print(prompt.format(prefix=prefix, meta_template=schema , document=text,     suffix=suffix  ))
+        first_chain = prompt | llm.bind(temperature=0.3, stop=['<|eot_id|>'])
+        
+    print(prompt.format(prefix=prefix, meta_template=schema, document=text, suffix=suffix))
     llm_response = first_chain.invoke(
-            {"prefix": prefix,  "meta_template": schema, "document": text,
-             "suffix": suffix })
+            {"prefix": prefix, "meta_template": schema, "document": text,
+             "suffix": suffix})
     print("llm_response:%s", llm_response.content)
-    return json.loads(llm_response.content)
-    meta_template_dict = json.loads(meta_template)
-    origin_data_keys = list(meta_template_dict.keys())
-
-    if use_structured_output:
-        summary, keywords = extract_metadata(text)
-        enriched_text = f"요약: {summary}\n키워드: {', '.join(keywords)}\n{text}" 
+    
+    try:
+        result = json.loads(llm_response.content)
         
-        # Explicit example in the prompt
-        prompt = f"""
-        당신은 분류 전문가입니다. 아래 메모의 각 문장을 기존 카테고리 중 하나에 분류하거나, 기존 카테고리에 맞지 않으면 새로운 카테고리명을 직접 만들어서 분류하세요.
-        아래 JSON 스키마의 키 이름(classification, new_categories)과 구조를 반드시 그대로 사용하세요.
-        각 문장은 1부터 시작하는 번호로 매핑하세요.
-
-        반드시 아래와 같은 JSON 형식으로만 응답하세요. 예시:
-        {{
-          "classification": {{
-            "1": "카테고리명",
-            "2": "카테고리명"
-          }},
-          "new_categories": [
-            "새로운카테고리"
-          ]
-        }}
-
-        기존 카테고리: {', '.join(categories)}
+        # Convert new schema result to expected structure if using structured output
+        if use_structured_output:
+            # Extract summary and keywords
+            summary, keywords = extract_metadata(text)
+            
+            # Check if we need to convert the new taxonomy format to the expected result format
+            if "domain" in result and "category" not in result.get("classification", {}):
+                # Create the classification structure expected by the API
+                classification = {}
+                lines = text.strip().splitlines()
+                domain = result.get("domain", "분류 안됨")
+                category = result.get("category", "분류 안됨")
+                
+                # Assign hierarchical classification to each line
+                for idx, line in enumerate(lines, 1):
+                    classification[str(idx)] = f"{domain} / {category}"
+                
+                # Structure the result to match expected format
+                result = {
+                    "classification": classification,
+                    "new_categories": [],
+                    "metadata": {
+                        "domain": domain,
+                        "category": category,
+                        "sub_category": result.get("sub_category", ""),
+                        "topic": result.get("topic", ""),
+                        "subtopic": result.get("subtopic", ""),
+                        "tag": result.get("tag", "")
+                    }
+                }
         
-        메모:
-        {text}
-        """
+        return result
         
-        # Use function calling if available
-        response = client.chat.completions.create(
-            model="gpt-4.1-2025-04-14",
-            messages=[
-                {"role": "system", "content": "당신은 메모 분류 전문가입니다. 반드시 JSON 스키마에 맞춰 응답하세요."},
-                {"role": "user", "content": prompt}
-            ],
-            response_format={"type": "json_object"}  # Force JSON response
-        )
+    except Exception as e:
+        print(f"Error parsing LLM response: {e}")
+        logging.error(f"Error parsing LLM response: {e}")
         
-        # Ensure proper JSON parsing
-        content = response.choices[0].message.content.strip()
-        if not content:
-            print(f"LLM response content is empty. Full response: {response}")
-            raise ValueError("LLM response content is empty. Cannot classify memo.")
-        try:
-            result = json.loads(content)
-            # Validate result has required keys
-            if "classification" not in result or "new_categories" not in result:
-                print(f"LLM response missing required keys. Content: {content}")
-                raise ValueError("Response missing required keys")
-            return result
-        except Exception as e:
-            print(f"Failed to parse LLM output as JSON. Content: {content}\nError: {e}")
-            raise ValueError(f"Failed to parse LLM output as JSON: {content}\nError: {e}")
+        # Fallback to the old approach if there's an error with the new schema
+        if use_structured_output:
+            summary, keywords = extract_metadata(text)
+            enriched_text = f"요약: {summary}\n키워드: {', '.join(keywords)}\n{text}" 
+            
+            # Explicit example in the prompt
+            prompt = f"""
+            당신은 분류 전문가입니다. 아래 메모의 각 문장을 기존 카테고리 중 하나에 분류하거나, 기존 카테고리에 맞지 않으면 새로운 카테고리명을 직접 만들어서 분류하세요.
+            아래 JSON 스키마의 키 이름(classification, new_categories)과 구조를 반드시 그대로 사용하세요.
+            각 문장은 1부터 시작하는 번호로 매핑하세요.
+
+            반드시 아래와 같은 JSON 형식으로만 응답하세요. 예시:
+            {{
+              "classification": {{
+                "1": "카테고리명",
+                "2": "카테고리명"
+              }},
+              "new_categories": [
+                "새로운카테고리"
+              ]
+            }}
+
+            기존 카테고리: {', '.join(categories)}
+            
+            메모:
+            {text}
+            """
+            
+            # Use function calling if available
+            response = client.chat.completions.create(
+                model="gpt-4.1-2025-04-14",
+                messages=[
+                    {"role": "system", "content": "당신은 메모 분류 전문가입니다. 반드시 JSON 스키마에 맞춰 응답하세요."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"}  # Force JSON response
+            )
+            
+            # Ensure proper JSON parsing
+            content = response.choices[0].message.content.strip()
+            if not content:
+                print(f"LLM response content is empty. Full response: {response}")
+                raise ValueError("LLM response content is empty. Cannot classify memo.")
+            try:
+                result = json.loads(content)
+                # Validate result has required keys
+                if "classification" not in result or "new_categories" not in result:
+                    print(f"LLM response missing required keys. Content: {content}")
+                    raise ValueError("Response missing required keys")
+                return result
+            except Exception as e:
+                print(f"Failed to parse LLM output as JSON. Content: {content}\nError: {e}")
+                raise ValueError(f"Failed to parse LLM output as JSON: {content}\nError: {e}")
 
 
-    else:
-        summary, keywords = extract_metadata(text)
-        enriched_text = f"요약: {summary}\n키워드: {', '.join(keywords)}\n{text}"
-        
-        prompt = f"""
-        당신은 분류 전문가입니다. 아래 메모를 문장 단위로 분리하고, 가능한 한 기존 카테고리에 매핑하세요.
-        만약 어떤 문장이 기존 카테고리와 맞지 않는다면, 새로운 카테고리를 생성하되, 중복되지 않고 간결하게 지어주세요.
-        반드시 JSON 형식(예: {{1: 'AI 개발', 2: '새로운 카테고리: 콘텐츠 확산 전략'}})으로만 응답하세요. 설명 없이 결과만 출력하세요.
+        else:
+            summary, keywords = extract_metadata(text)
+            enriched_text = f"요약: {summary}\n키워드: {', '.join(keywords)}\n{text}"
+            
+            prompt = f"""
+            당신은 분류 전문가입니다. 아래 메모를 문장 단위로 분리하고, 가능한 한 기존 카테고리에 매핑하세요.
+            만약 어떤 문장이 기존 카테고리와 맞지 않는다면, 새로운 카테고리를 생성하되, 중복되지 않고 간결하게 지어주세요.
+            반드시 JSON 형식(예: {{1: 'AI 개발', 2: '새로운 카테고리: 콘텐츠 확산 전략'}})으로만 응답하세요. 설명 없이 결과만 출력하세요.
 
-        기존 카테고리: {', '.join(categories)}
+            기존 카테고리: {', '.join(categories)}
 
-        메모:
-        {enriched_text}
-        """
+            메모:
+            {enriched_text}
+            """
 
-        response = client.chat.completions.create(
-            model="gpt-4.1-2025-04-14",
-            messages=[
-                {"role": "system", "content": "당신은 메모 분류 전문가입니다. 반드시 JSON 형식으로만 응답하세요. 설명 없이 결과만 출력하세요."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        content = response.choices[0].message.content.strip()
-        import re
-        json_match = re.search(r'(\{[\s\S]*\})', content)
-        if not json_match:
-            raise ValueError(f"LLM did not return JSON. Raw output: {content}")
-        json_str = json_match.group(1)
-        json_str = json_str.replace("'", '"') if "'" in json_str and '"' not in json_str else json_str
-        try:
-            return json.loads(json_str)
-        except Exception as e:
-            raise ValueError(f"Failed to parse LLM output as JSON: {json_str}\nOriginal output: {content}\nError: {e}")
+            response = client.chat.completions.create(
+                model="gpt-4.1-2025-04-14",
+                messages=[
+                    {"role": "system", "content": "당신은 메모 분류 전문가입니다. 반드시 JSON 형식으로만 응답하세요. 설명 없이 결과만 출력하세요."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            content = response.choices[0].message.content.strip()
+            import re
+            json_match = re.search(r'(\{[\s\S]*\})', content)
+            if not json_match:
+                raise ValueError(f"LLM did not return JSON. Raw output: {content}")
+            json_str = json_match.group(1)
+            json_str = json_str.replace("'", '"') if "'" in json_str and '"' not in json_str else json_str
+            try:
+                return json.loads(json_str)
+            except Exception as e:
+                raise ValueError(f"Failed to parse LLM output as JSON: {json_str}\nOriginal output: {content}\nError: {e}")
 
