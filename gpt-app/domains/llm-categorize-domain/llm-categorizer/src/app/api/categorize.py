@@ -59,7 +59,7 @@ async def classify(request: MemoRequest):
             lines = request.memo.strip().splitlines()
             # Assign both main and sub categories to each line (or customize as needed)
             for idx, line in enumerate(lines, 1):
-                classification[str(idx)] = f"{main_cat} / {sub_cat}"
+                classification[str(idx)] = f"{main_cat} / {sub_cat} / test"
             result = {
                 "classification": classification,
                 "new_categories": []
@@ -110,7 +110,10 @@ async def classify(request: MemoRequest):
             db.refresh(category_obj)
             # 바이브 코딩으로 따라갈수가없네. -> 카테고리 추가 
         print(f"Adding MemoCategory to DB: memo_id={memo_obj.id}, category_id={category_obj.id}, sentence_number={idx}, sentence={line}")
+        
         db.add(MemoCategory(memo_id=memo_obj.id, category_id=category_obj.id, sentence_number=idx, sentence=line))
+        
+        
     db.commit()
     db.close()
 

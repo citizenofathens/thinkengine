@@ -1,24 +1,38 @@
-# GPT App (Svelte)
+# FastAPI Google OAuth2 Authentication
 
-## How to use frontend
+This project implements Google OAuth2 authentication in a FastAPI application.
 
-1. **Install dependencies** (run in `gpt-app` folder):
-   ```bash
-   pnpm install
-   ```
-2. **Start the dev server**:
-   ```bash
-   pnpm run dev
-   ```
-3. **Open your browser** to the address shown in the terminal (usually http://localhost:5173/).
+## Setup
 
-You should see the GPT App main page. Edit `src/MainPage.svelte` to customize your main page!
+1. Create a `.env` file in the root directory with the following variables:
+```
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+GOOGLE_REDIRECT_URI=http://localhost:8000/auth/callback
+SECRET_KEY=your_secret_key
+```
 
-## How to use backent
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-(run in `gpt-app` folder):
-venv\Scripts\activate
-# if use --reload then can't kill the process in terminal
-# uvicorn thinkengine:app  --host 0.0.0.0 --port 8000 
-(run in `gpt-app\domains\llm-categorize-domain\llm-categorizer\src>` folder)
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+3. Run the application:
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+## API Endpoints
+
+- `GET /`: Welcome message
+- `GET /auth/login`: Initiates Google OAuth2 login
+- `GET /auth/callback`: Handles OAuth2 callback
+- `GET /auth/user`: Returns authenticated user's email
+
+## Development
+
+To generate a secure SECRET_KEY, you can use the following Python code:
+```python
+import secrets
+print(secrets.token_hex(32))
+```
