@@ -11,6 +11,8 @@ __pycache__/
 node_modules/
 gpt-app/node_modules/
 services/web_front/node_modules/
+./youtube_transcripts/*
+
 
 # IDE/editor
 .vscode/
