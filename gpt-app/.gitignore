@@ -20,7 +20,7 @@ services/web_front/node_modules/
 *.env
 *.ini
 api_key.ini
-
+./youtube_transcripts/*
 # Build outputs
 dist/
 build/
