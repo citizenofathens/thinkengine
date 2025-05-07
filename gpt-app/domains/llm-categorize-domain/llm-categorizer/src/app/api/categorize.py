@@ -62,10 +62,12 @@ async def classify(request: MemoRequest):
             # 여기서 나눔
 
             # 문장 단위로 먼저 분리
-            sentences = text.strip().split('.')
+            sentences =  request.memo.strip().split('.')
             sentences = [s.strip() for s in sentences if s.strip()]
             
-            # 임베딩 생성 및 의미 기반 클러스터링
+       #    임베딩 생성 및 의미 기반 클러스터링
+            from sentence_transformers import SentenceTransformer
+            model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
             embeddings = model.encode(sentences)
             from sklearn.cluster import KMeans
             n_clusters = min(len(sentences), 5)  # 최대 5개 클러스터
@@ -77,10 +79,9 @@ async def classify(request: MemoRequest):
             for i in range(n_clusters):
                 cluster_sentences = [s for idx, s in enumerate(sentences) if clusters[idx] == i]
                 lines.append(' '.join(cluster_sentences))
-            print('lines:', lines)
-        #test
-
-            #lines = request.memo.strip().splitlines()
+            print('lines best:', lines)
+           
+           #lines = request.memo.strip().splitlines()
             # Assign both main and sub categories to each line (or customize as needed)
             # 라인별로 순회하면서 모두 똑같은 category를 붙여주고있는데, 라인별로 다른 카테고리를 아예 매핑해주고 라인순회하면서 붙이자 
             # 위의 result에서 변경해야함
